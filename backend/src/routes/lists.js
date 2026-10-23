@@ -57,4 +57,28 @@ router.post('/join', async (req, res) => {
   res.json({ listId });
 });
 
+// routes/lists.js
+router.delete('/:listId', auth, async (req, res) => {
+    try {
+        const list = await List.findOne({
+            _id: req.params.listId,
+            owner: req.user.id   // Ownership-Check direkt in der Query
+        });
+
+        if (!list) {
+            return res.status(404).json({ message: 'Liste nicht gefunden oder keine Berechtigung' });
+        }
+
+        // Items der Liste mitlöschen (Cascade)
+        await Item.deleteMany({ listId: req.params.listId });
+
+        // Liste selbst löschen
+        await List.findByIdAndDelete(req.params.listId);
+
+        res.status(204).send(); // 204 = erfolgreich, kein Content
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+});
+
 module.exports = router;
