@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { getIo } = require('../sockets');
+const { sendToListMembers } = require('../services/push');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -42,6 +43,14 @@ router.post('/lists/:listId/items', async (req, res) => {
 
   const item = result.rows[0];
   getIo().to(listId).emit('item:added', { listId, item });
+  // Push an alle anderen Mitglieder
+  sendToListMembers(
+    listId,
+    'Neuer Artikel',
+    `${item.name} wurde zur Liste hinzugefügt`,
+    req.user.userId
+  ).catch(err => console.error('Push-Fehler:', err));
+
   res.status(201).json(item);
 });
 
