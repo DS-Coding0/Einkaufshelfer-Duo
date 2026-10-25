@@ -6,78 +6,85 @@ const { requireAuth } = require('../middleware/auth');
 const router = express.Router();
 router.use(requireAuth);
 
+// 6-stelliger, verwechslungssicherer Invite-Code
+function generateInviteCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // ohne 0/O/1/I
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+        code += chars[crypto.randomInt(chars.length)];
+    }
+    return code;
+}
+
 // Meine Listen
 router.get('/', async (req, res) => {
-  const result = await pool.query(
-    `SELECT l.* FROM lists l
-     JOIN list_members m ON m.list_id = l.id
-     WHERE m.user_id = $1`,
-    [req.user.userId]
-  );
-  res.json(result.rows);
+    const result = await pool.query(
+        `SELECT l.* FROM lists l
+         JOIN list_members m ON m.list_id = l.id
+         WHERE m.user_id = $1`,
+        [req.user.userId]
+    );
+    res.json(result.rows);
 });
 
 // Neue Liste
 router.post('/', async (req, res) => {
-  const { name } = req.body;
-  const inviteCode = crypto.randomBytes(4).toString('hex');
+    const { name } = req.body;
+    const inviteCode = generateInviteCode();
 
-  const result = await pool.query(
-    `INSERT INTO lists (name, owner_id, invite_code)
-     VALUES ($1, $2, $3) RETURNING *`,
-    [name, req.user.userId, inviteCode]
-  );
+    const result = await pool.query(
+        `INSERT INTO lists (name, owner_id, invite_code)
+         VALUES ($1, $2, $3) RETURNING *`,
+        [name, req.user.userId, inviteCode]
+    );
 
-  const list = result.rows[0];
-  await pool.query(
-    `INSERT INTO list_members (list_id, user_id, role) VALUES ($1, $2, 'owner')`,
-    [list.id, req.user.userId]
-  );
+    const list = result.rows[0];
+    await pool.query(
+        `INSERT INTO list_members (list_id, user_id, role) VALUES ($1, $2, 'owner')`,
+        [list.id, req.user.userId]
+    );
 
-  res.status(201).json(list);
+    res.status(201).json(list);
 });
 
 // Per Invite-Code beitreten
 router.post('/join', async (req, res) => {
-  const { inviteCode } = req.body;
-  const result = await pool.query(
-    `SELECT id FROM lists WHERE invite_code = $1`,
-    [inviteCode]
-  );
-  if (result.rows.length === 0)
-    return res.status(404).json({ error: 'Liste nicht gefunden' });
+    const { inviteCode } = req.body;
+    const result = await pool.query(
+        `SELECT id FROM lists WHERE invite_code = $1`,
+        [inviteCode]
+    );
+    if (result.rows.length === 0)
+        return res.status(404).json({ error: 'Liste nicht gefunden' });
 
-  const listId = result.rows[0].id;
-  await pool.query(
-    `INSERT INTO list_members (list_id, user_id) VALUES ($1, $2)
-     ON CONFLICT DO NOTHING`,
-    [listId, req.user.userId]
-  );
+    const listId = result.rows[0].id;
+    await pool.query(
+        `INSERT INTO list_members (list_id, user_id) VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [listId, req.user.userId]
+    );
 
-  res.json({ listId });
+    res.json({ listId });
 });
 
-// routes/lists.js
-router.delete('/:listId', auth, async (req, res) => {
+// Liste löschen (nur Owner)
+router.delete('/:listId', async (req, res) => {
     try {
-        const list = await List.findOne({
-            _id: req.params.listId,
-            owner: req.user.id   // Ownership-Check direkt in der Query
-        });
+        const result = await pool.query(
+            `DELETE FROM lists
+             WHERE id = $1 AND owner_id = $2
+             RETURNING id`,
+            [req.params.listId, req.user.userId]
+        );
 
-        if (!list) {
-            return res.status(404).json({ message: 'Liste nicht gefunden oder keine Berechtigung' });
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Liste nicht gefunden oder keine Berechtigung' });
         }
 
-        // Items der Liste mitlöschen (Cascade)
-        await Item.deleteMany({ listId: req.params.listId });
-
-        // Liste selbst löschen
-        await List.findByIdAndDelete(req.params.listId);
-
-        res.status(204).send(); // 204 = erfolgreich, kein Content
+        // Items und list_members werden durch ON DELETE CASCADE automatisch mitgelöscht
+        res.status(204).send();
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        res.status(500).json({ error: err.message });
     }
 });
 

@@ -40,4 +40,14 @@ CREATE TABLE IF NOT EXISTS items (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Einmalig ausführen, um bestehende Codes zu erneuern
+UPDATE lists
+SET invite_code = substr(
+    translate(
+        encode(gen_random_bytes(8), 'hex'),
+        '0189abcdef', 'ABCDEFGH'
+    ),
+    1, 6
+);
+
 COMMIT;
